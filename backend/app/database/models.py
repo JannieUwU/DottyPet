@@ -183,3 +183,22 @@ class DashboardNote(Base):
     note_date  = Column(Text, nullable=False)   # YYYY-MM-DD
     content    = Column(EncryptedText, nullable=False, default="")
     updated_at = Column(Text, nullable=False, server_default="(datetime('now'))")
+
+
+class OtpCode(Base):
+    """Persistent OTP codes for email verification."""
+    __tablename__ = "otp_codes"
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    email      = Column(Text, nullable=False, index=True)   # lowercase email
+    code       = Column(Text, nullable=False)
+    attempts   = Column(Integer, nullable=False, default=0)
+    expires_at = Column(Text, nullable=False)               # ISO datetime
+    created_at = Column(Text, nullable=False, server_default="(datetime('now'))")
+
+
+class OtpSendLog(Base):
+    """Rate-limiting log for OTP email sends."""
+    __tablename__ = "otp_send_log"
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    email      = Column(Text, nullable=False, index=True)   # lowercase email
+    sent_at    = Column(Text, nullable=False, server_default="(datetime('now'))")
