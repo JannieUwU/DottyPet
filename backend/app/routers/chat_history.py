@@ -1,5 +1,5 @@
 """Chat history router — persist and retrieve Dotty chat messages."""
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 from app.database.connection import get_db
@@ -35,7 +35,7 @@ class MessageOut(BaseModel):
 
 
 @router.get("/", response_model=list[MessageOut])
-def get_history(limit: int = 100, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+def get_history(limit: int = Query(default=100, ge=1, le=500), db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
     rows = (
         db.query(ChatMessage)
         .filter(ChatMessage.user_id == user_id)
