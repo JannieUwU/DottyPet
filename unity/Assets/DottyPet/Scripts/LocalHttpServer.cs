@@ -36,9 +36,22 @@ public class LocalHttpServer : MonoBehaviour
     private HttpListener _listener;
     private Thread _thread;
     private readonly ConcurrentQueue<Action> _mainThreadQueue = new();
+    private string _authToken = "";
 
     void OnEnable()
     {
+        // Read the shared secret passed by Electron via -authToken <token>
+        var args = System.Environment.GetCommandLineArgs();
+        for (int i = 0; i < args.Length - 1; i++)
+        {
+            if (args[i] == "-authToken")
+            {
+                _authToken = args[i + 1];
+                break;
+            }
+        }
+        if (string.IsNullOrEmpty(_authToken))
+            Debug.LogWarning("[LocalHttpServer] No -authToken provided — all requests will be rejected.");
         _listener = new HttpListener();
         _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
         _listener.Start();
@@ -82,10 +95,19 @@ public class LocalHttpServer : MonoBehaviour
     {
         var req = ctx.Request;
         var res = ctx.Response;
-        res.Headers.Add("Access-Control-Allow-Origin", "*");
         res.ContentType = "application/json";
         try
         {
+            // Validate shared secret on every request
+            string token = req.Headers["X-Auth-Token"] ?? "";
+            if (token != _authToken || string.IsNullOrEmpty(_authToken))
+            {
+                res.StatusCode = 401;
+                byte[] denied = Encoding.UTF8.GetBytes("{\"error\":\"unauthorized\"}");
+                res.ContentLength64 = denied.Length;
+                res.OutputStream.Write(denied, 0, denied.Length);
+                return;
+            }
             string body = "";
             if (req.HasEntityBody)
                 using (var sr = new StreamReader(req.InputStream, req.ContentEncoding))

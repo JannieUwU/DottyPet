@@ -5,9 +5,14 @@ import type { ExecFileException } from 'child_process'
 import path from 'path'
 import fs from 'fs'
 import http from 'http'
+import crypto from 'crypto'
 import { uIOhook, UiohookMouseEvent } from 'uiohook-napi'
 
 const isDev = !app.isPackaged
+
+// Shared secret between Electron and Unity — generated fresh each run.
+// Passed to Unity via -authToken CLI arg; included in every HTTP request.
+const UNITY_AUTH_TOKEN = crypto.randomBytes(32).toString('hex')
 let isQuitting = false
 
 // ── Git monitor helpers ────────────────────────────────────────────────────
@@ -318,7 +323,7 @@ const postToUnity = (unityPath: string, body: object) => {
   const req = http.request(
     {
       hostname: '127.0.0.1', port: 8765, path: unityPath, method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data), 'X-Auth-Token': UNITY_AUTH_TOKEN },
       timeout: 800,
     },
     (res) => {
@@ -445,7 +450,7 @@ function startUnity(): void {
   const exe = findUnityExe()
   if (!exe) return
   console.log(`[Unity] Launching: ${exe}`)
-  unityProcess = spawn(exe, [], { stdio: 'ignore', detached: false })
+  unityProcess = spawn(exe, ['-authToken', UNITY_AUTH_TOKEN], { stdio: 'ignore', detached: false })
   unityProcess.on('exit',  (code, sig) => { console.warn(`[Unity] exited code=${code} signal=${sig}`); unityProcess = null })
   unityProcess.on('error', (err)       => { console.error('[Unity] spawn error:', err.message);        unityProcess = null })
 }
@@ -466,7 +471,7 @@ let cachedStatus: UnityStatus = { online: false, wx: 0, wy: 0, ww: 0, wh: 0 }
 function fetchStatus(): Promise<UnityStatus> {
   return new Promise(resolve => {
     const req = http.get(
-      { hostname: '127.0.0.1', port: 8765, path: '/status', timeout: 600 },
+      { hostname: '127.0.0.1', port: 8765, path: '/status', timeout: 600, headers: { 'X-Auth-Token': UNITY_AUTH_TOKEN } },
       res => {
         let data = ''
         res.on('data', c => { data += c })
@@ -865,7 +870,7 @@ ipcMain.handle('unity-launch', async () => {
   if (unityProcess && !unityProcess.killed) return { ok: false, reason: 'already running' }
   const exe = findUnityExe()
   if (!exe) return { ok: false, reason: 'no exe found' }
-  unityProcess = spawn(exe, [], { stdio: 'ignore', detached: false })
+  unityProcess = spawn(exe, ['-authToken', UNITY_AUTH_TOKEN], { stdio: 'ignore', detached: false })
   return { ok: true }
 })
 
@@ -929,7 +934,7 @@ ipcMain.handle('load-vrm-model', async (_e, rawPath: unknown) => {
     const data = JSON.stringify({ path: resolved })
     const req = http.request(
       { hostname: '127.0.0.1', port: 8765, path: '/model', method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data), 'X-Auth-Token': UNITY_AUTH_TOKEN },
         timeout: 3000 },
       (res) => {
         let body = ''
@@ -970,7 +975,7 @@ ipcMain.handle('reset-vrm-model', async () => {
     const data = JSON.stringify({ path: '' })
     const req = http.request(
       { hostname: '127.0.0.1', port: 8765, path: '/model', method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data), 'X-Auth-Token': UNITY_AUTH_TOKEN },
         timeout: 2000 },
       (res) => { res.resume(); resolve(res.statusCode !== undefined && res.statusCode < 300) }
     )
