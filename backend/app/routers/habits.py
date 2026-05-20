@@ -10,6 +10,7 @@ from app.dependencies import get_current_user_id
 router = APIRouter()
 
 _DAYS_RE = re.compile(r"^[0-6](,[0-6])*$")
+_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 
 class HabitIn(BaseModel):
@@ -19,6 +20,13 @@ class HabitIn(BaseModel):
     remind_time: Optional[str] = None
     days: str = "0,1,2,3,4,5,6"
     sort_order: int = 0
+
+    @field_validator("color")
+    @classmethod
+    def color_must_be_hex(cls, v: str) -> str:
+        if not _COLOR_RE.match(v):
+            raise ValueError("color must be a hex color like #RRGGBB")
+        return v
 
     @field_validator("days")
     @classmethod

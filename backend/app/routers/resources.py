@@ -4,13 +4,16 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from app.database.connection import get_db
 from app.database.models import ResourceFolder, ResourceFile
 from app.config import RESOURCES_BASE_DIR
 from app.dependencies import get_current_user_id
 
+import re as _re
+
 BASE_DIR = RESOURCES_BASE_DIR
+_COLOR_RE = _re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 def _user_dir(user_id: int) -> str:
     return os.path.join(BASE_DIR, str(user_id))
@@ -76,6 +79,13 @@ def _generate_thumb(file_id: int, stored_path: str, file_type: str, user_id: int
 class FolderIn(BaseModel):
     name: str
     color: str = "#83B5B5"
+
+    @field_validator("color")
+    @classmethod
+    def color_must_be_hex(cls, v: str) -> str:
+        if not _COLOR_RE.match(v):
+            raise ValueError("color must be a hex color like #RRGGBB")
+        return v
 
 class FolderRename(BaseModel):
     name: str

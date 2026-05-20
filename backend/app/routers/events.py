@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
 import re
 from app.database.connection import get_db
@@ -13,6 +13,9 @@ router = APIRouter()
 _MONTH_RE = re.compile(r"^\d{4}-(?:0[1-9]|1[0-2])$")
 
 
+_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+
 class EventIn(BaseModel):
     title: str
     date: str
@@ -21,6 +24,13 @@ class EventIn(BaseModel):
     color: str = "#83B5B5"
     has_countdown: bool = False
     description: Optional[str] = None
+
+    @field_validator("color")
+    @classmethod
+    def color_must_be_hex(cls, v: str) -> str:
+        if not _COLOR_RE.match(v):
+            raise ValueError("color must be a hex color like #RRGGBB")
+        return v
 
 
 class EventOut(EventIn):
