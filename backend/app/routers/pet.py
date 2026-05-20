@@ -14,8 +14,7 @@ Endpoints:
 
 import asyncio
 import logging
-import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -37,8 +36,12 @@ from app.dependencies import get_current_user_id
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-# Regex for validating YYYY-MM-DD path parameters
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+def _validate_date(date_str: str):
+    try:
+        datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(400, detail="date must be a valid YYYY-MM-DD")
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -203,8 +206,7 @@ async def trigger_review_generation(db: Session = Depends(get_db), user_id: int 
 
 @router.post("/reviews/{review_date}/regenerate")
 async def regenerate_review(review_date: str, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
-    if not _DATE_RE.match(review_date):
-        raise HTTPException(400, detail="review_date must be YYYY-MM-DD")
+    _validate_date(review_date)
 
     db.execute(
         _text(

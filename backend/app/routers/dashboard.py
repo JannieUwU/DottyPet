@@ -7,7 +7,6 @@ Endpoints:
   GET  /dashboard/notes          Return all notes (newest first, max 90 days)
 """
 
-import re
 import logging
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
@@ -21,13 +20,14 @@ from app.dependencies import get_current_user_id
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 MAX_NOTE_LEN = 2000
 
 
 def _validate_date(date_str: str):
-    if not _DATE_RE.match(date_str):
-        raise HTTPException(400, detail="date must be YYYY-MM-DD")
+    try:
+        datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(400, detail="date must be a valid YYYY-MM-DD")
 
 
 def _note_to_dict(n: DashboardNote) -> dict:
