@@ -1,12 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
+import re
 from app.database.connection import get_db
 from app.database.models import Habit, HabitCheck
 from app.dependencies import get_current_user_id
 
 router = APIRouter()
+
+_DAYS_RE = re.compile(r"^[0-6](,[0-6])*$")
 
 
 class HabitIn(BaseModel):
@@ -16,6 +19,13 @@ class HabitIn(BaseModel):
     remind_time: Optional[str] = None
     days: str = "0,1,2,3,4,5,6"
     sort_order: int = 0
+
+    @field_validator("days")
+    @classmethod
+    def days_must_be_valid(cls, v: str) -> str:
+        if not _DAYS_RE.match(v):
+            raise ValueError("days must be comma-separated weekday numbers 0-6")
+        return v
 
 
 class HabitOut(HabitIn):
@@ -71,6 +81,13 @@ def delete_habit(habit_id: int, db: Session = Depends(get_db), user_id: int = De
 class HabitUpdate(BaseModel):
     days: str
     remind_time: Optional[str] = None
+
+    @field_validator("days")
+    @classmethod
+    def days_must_be_valid(cls, v: str) -> str:
+        if not _DAYS_RE.match(v):
+            raise ValueError("days must be comma-separated weekday numbers 0-6")
+        return v
 
 
 @router.patch("/{habit_id}", response_model=HabitOut)
