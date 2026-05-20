@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 from app.database.connection import get_db
 from app.database.models import FocusSession
@@ -10,7 +10,7 @@ router = APIRouter()
 
 
 class FocusIn(BaseModel):
-    task_name: str = ""
+    task_name: str = Field(default="", max_length=200)
     start_time: str
     end_time: str
     duration_min: int
