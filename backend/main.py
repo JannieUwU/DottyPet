@@ -6,7 +6,7 @@ import logging
 import os
 import uvicorn
 
-from app.routers import chat, system, git_monitor
+from app.routers import chat, system
 from app.routers import events, goals, habits, focus, settings, resources, menu, chat_history, pet, dashboard
 from app.routers.auth import router as auth_router
 from app.services.ws_server import router as ws_router
@@ -229,7 +229,6 @@ app.add_middleware(
 
 app.include_router(chat.router,       prefix="/chat",           tags=["chat"])
 app.include_router(system.router,     prefix="/system",         tags=["system"])
-app.include_router(git_monitor.router,prefix="/git",            tags=["git"])
 app.include_router(events.router,     prefix="/events",         tags=["events"])
 app.include_router(goals.router,      prefix="/goals",          tags=["goals"])
 app.include_router(habits.router,     prefix="/habits",         tags=["habits"])
