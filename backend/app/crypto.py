@@ -12,6 +12,13 @@ Key management:
     ~/.config/dotty-pet/encryption.key on Linux.
     If the file does not exist yet it is created with a fresh random key.
 
+Legacy key migration:
+  - Databases created before this key-management scheme used a key derived from
+    platform.node() (hostname) via PBKDF2HMAC-SHA256 with a fixed salt.
+  - decrypt() tries the primary key first; on InvalidToken it falls back to the
+    legacy key so that _migrate_encrypt_fields() can re-encrypt old rows.
+  - The legacy Fernet instance is only used for decryption, never for encryption.
+
 Encryption format:
   - Stored value: "enc:" + Fernet token (urlsafe-base64)
   - Plain values (no "enc:" prefix) are returned as-is for backward compatibility
@@ -19,10 +26,13 @@ Encryption format:
 
 import base64
 import os
+import platform
 import secrets
 import sys
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
 from sqlalchemy import Text
 from sqlalchemy.types import TypeDecorator
 
@@ -55,7 +65,6 @@ def _load_key() -> bytes:
         else:
             raw = secrets.token_urlsafe(32)
             os.makedirs(os.path.dirname(key_path), exist_ok=True)
-            # Write with restricted permissions where supported.
             fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(raw)
@@ -68,7 +77,15 @@ def _load_key() -> bytes:
     return base64.urlsafe_b64encode(decoded)  # Fernet-ready form
 
 
+def _load_legacy_key() -> bytes:
+    """Derive the old hostname-based key for migrating pre-existing databases."""
+    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32,
+                     salt=b"dotty-pet-v1", iterations=100_000)
+    return base64.urlsafe_b64encode(kdf.derive(platform.node().encode()))
+
+
 _fernet = Fernet(_load_key())
+_fernet_legacy = Fernet(_load_legacy_key())
 
 
 # ── Encrypt / decrypt helpers ──────────────────────────────────────────────────
@@ -80,9 +97,15 @@ def encrypt(value: str) -> str:
 
 def decrypt(value: str) -> str:
     """Decrypt an enc:-prefixed value; return plain values unchanged."""
-    if value.startswith(_PREFIX):
-        return _fernet.decrypt(value[len(_PREFIX):].encode()).decode()
-    return value
+    if not value.startswith(_PREFIX):
+        return value
+    token = value[len(_PREFIX):].encode()
+    try:
+        return _fernet.decrypt(token).decode()
+    except InvalidToken:
+        # Fall back to legacy key — allows _migrate_encrypt_fields() to
+        # re-encrypt rows that were written before the key-management change.
+        return _fernet_legacy.decrypt(token).decode()
 
 
 # ── SQLAlchemy TypeDecorator ───────────────────────────────────────────────────
