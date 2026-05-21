@@ -419,6 +419,21 @@ function killBackend(): Promise<void> {
   })
 }
 
+// ── Encryption key management ─────────────────────────────────────────────────
+// A random 32-byte key is generated once on first launch and stored in userData.
+// It is passed to the backend via environment variable so crypto.py never
+// derives a key from the (non-secret) hostname.
+
+function getOrCreateEncryptionKey(): string {
+  const keyPath = path.join(app.getPath('userData'), 'encryption.key')
+  if (fs.existsSync(keyPath)) {
+    return fs.readFileSync(keyPath, 'utf8').trim()
+  }
+  const key = crypto.randomBytes(32).toString('base64url')
+  fs.writeFileSync(keyPath, key, { encoding: 'utf8', mode: 0o600 })
+  return key
+}
+
 function startBackend(): void {
   const backendDir = isDev
     ? path.join(__dirname, '../../backend')
@@ -427,7 +442,11 @@ function startBackend(): void {
   const script  = path.join(backendDir, 'main.py')
   if (!fs.existsSync(script)) { console.warn('[Backend] main.py not found, skipping'); return }
   if (!fs.existsSync(python)) { console.warn('[Backend] python.exe not found, skipping'); return }
-  backendProcess = spawn(python, [script], { cwd: backendDir, stdio: 'pipe', detached: false })
+  const encryptionKey = getOrCreateEncryptionKey()
+  backendProcess = spawn(python, [script], {
+    cwd: backendDir, stdio: 'pipe', detached: false,
+    env: { ...process.env, DOTTY_ENCRYPTION_KEY: encryptionKey },
+  })
   backendProcess.stderr?.on('data', (d: Buffer) => console.error('[Backend]', d.toString().trimEnd()))
   backendProcess.stdout?.on('data', (d: Buffer) => console.log('[Backend]',  d.toString().trimEnd()))
   backendProcess.on('exit',  (code, sig) => { console.warn(`[Backend] exited code=${code} signal=${sig}`); backendProcess = null })

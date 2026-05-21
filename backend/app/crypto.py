@@ -1,11 +1,12 @@
 """
 Application-layer field encryption for sensitive database columns.
 
-Key derivation:
-  - Source: platform.node() (hostname) as machine identifier
-  - Algorithm: PBKDF2HMAC-SHA256, 100 000 iterations, fixed salt
-  - Output: 32 bytes → urlsafe-base64 → Fernet key
-  - Derived once at module load, kept in memory only
+Key management:
+  - Key is generated once at first launch by the Electron host and stored in
+    <userData>/encryption.key (mode 0o600, readable only by the current user).
+  - Passed to this process via the DOTTY_ENCRYPTION_KEY environment variable.
+  - The key is a 32-byte random value encoded as base64url, which is used
+    directly as a Fernet key (Fernet requires 32 url-safe base64 bytes).
 
 Encryption format:
   - Stored value: "enc:" + Fernet token (urlsafe-base64)
@@ -13,32 +14,34 @@ Encryption format:
 """
 
 import base64
-import platform
+import os
 
 from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
 from sqlalchemy import Text
 from sqlalchemy.types import TypeDecorator
 
-# ── Key derivation ─────────────────────────────────────────────────────────────
+# ── Key loading ────────────────────────────────────────────────────────────────
 
-_SALT = b"dotty-pet-v1"
 _PREFIX = "enc:"
 
 
-def _derive_key() -> bytes:
-    kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=32,
-        salt=_SALT,
-        iterations=100_000,
-    )
-    raw = kdf.derive(platform.node().encode())
-    return base64.urlsafe_b64encode(raw)
+def _load_key() -> bytes:
+    raw = os.environ.get("DOTTY_ENCRYPTION_KEY", "")
+    if not raw:
+        raise RuntimeError(
+            "DOTTY_ENCRYPTION_KEY environment variable is not set. "
+            "The Electron host must generate and pass this key on startup."
+        )
+    # Fernet expects exactly 32 url-safe base64-encoded bytes (44 chars with padding).
+    # Our key is base64url without padding; add padding and verify length.
+    padded = raw + "=" * (-len(raw) % 4)
+    decoded = base64.urlsafe_b64decode(padded)
+    if len(decoded) != 32:
+        raise RuntimeError("DOTTY_ENCRYPTION_KEY must be 32 bytes encoded as base64url.")
+    return base64.urlsafe_b64encode(decoded)  # Fernet-ready form
 
 
-_fernet = Fernet(_derive_key())
+_fernet = Fernet(_load_key())
 
 
 # ── Encrypt / decrypt helpers ──────────────────────────────────────────────────
