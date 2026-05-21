@@ -287,7 +287,7 @@ const createProjectForVSCode = async (projectName: string) => {
     if (!fs.statSync(projectPath).isDirectory()) throw new Error('A file already exists at this project path.')
     const shouldReplace = await confirmReplace('A project folder with this name already exists.', `${projectPath}\n\nReplacing it will delete the existing folder and create a new empty project.`)
     if (!shouldReplace) return null
-    fs.rmSync(projectPath, { recursive: true, force: true })
+    await shell.trashItem(projectPath)
   }
   fs.mkdirSync(projectPath)
   fs.writeFileSync(path.join(projectPath, 'README.md'), `# ${trimmedName}\n`)
