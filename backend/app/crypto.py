@@ -2,11 +2,15 @@
 Application-layer field encryption for sensitive database columns.
 
 Key management:
-  - Key is generated once at first launch by the Electron host and stored in
-    <userData>/encryption.key (mode 0o600, readable only by the current user).
-  - Passed to this process via the DOTTY_ENCRYPTION_KEY environment variable.
-  - The key is a 32-byte random value encoded as base64url, which is used
-    directly as a Fernet key (Fernet requires 32 url-safe base64 bytes).
+  - Production: Electron generates a random 32-byte key on first launch, stores
+    it in <userData>/encryption.key (mode 0o600), and passes it via the
+    DOTTY_ENCRYPTION_KEY environment variable.
+  - Development (npm run dev:backend): the env var is not set, so the key is
+    loaded directly from the same file path that Electron would use:
+    %APPDATA%/dotty-pet/encryption.key on Windows,
+    ~/Library/Application Support/dotty-pet/encryption.key on macOS,
+    ~/.config/dotty-pet/encryption.key on Linux.
+    If the file does not exist yet it is created with a fresh random key.
 
 Encryption format:
   - Stored value: "enc:" + Fernet token (urlsafe-base64)
@@ -15,6 +19,8 @@ Encryption format:
 
 import base64
 import os
+import secrets
+import sys
 
 from cryptography.fernet import Fernet
 from sqlalchemy import Text
@@ -25,19 +31,40 @@ from sqlalchemy.types import TypeDecorator
 _PREFIX = "enc:"
 
 
+def _key_file_path() -> str:
+    """Return the platform-appropriate path for the persistent key file."""
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA", os.path.expanduser("~"))
+    elif sys.platform == "darwin":
+        base = os.path.expanduser("~/Library/Application Support")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+    return os.path.join(base, "dotty-pet", "encryption.key")
+
+
 def _load_key() -> bytes:
-    raw = os.environ.get("DOTTY_ENCRYPTION_KEY", "")
+    # Production path: Electron passes the key via environment variable.
+    raw = os.environ.get("DOTTY_ENCRYPTION_KEY", "").strip()
+
     if not raw:
-        raise RuntimeError(
-            "DOTTY_ENCRYPTION_KEY environment variable is not set. "
-            "The Electron host must generate and pass this key on startup."
-        )
-    # Fernet expects exactly 32 url-safe base64-encoded bytes (44 chars with padding).
-    # Our key is base64url without padding; add padding and verify length.
+        # Development path: read from (or create) the key file directly.
+        key_path = _key_file_path()
+        if os.path.exists(key_path):
+            with open(key_path, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+        else:
+            raw = secrets.token_urlsafe(32)
+            os.makedirs(os.path.dirname(key_path), exist_ok=True)
+            # Write with restricted permissions where supported.
+            fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(raw)
+
+    # Fernet expects exactly 32 url-safe base64-encoded bytes.
     padded = raw + "=" * (-len(raw) % 4)
     decoded = base64.urlsafe_b64decode(padded)
     if len(decoded) != 32:
-        raise RuntimeError("DOTTY_ENCRYPTION_KEY must be 32 bytes encoded as base64url.")
+        raise RuntimeError("Encryption key must be 32 bytes encoded as base64url.")
     return base64.urlsafe_b64encode(decoded)  # Fernet-ready form
 
 
