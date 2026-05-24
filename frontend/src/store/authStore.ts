@@ -91,7 +91,7 @@ const saveUser = (user: AuthUser | null) => {
 
 interface LoginInput { email: string; password: string }
 interface RegisterInput { email: string; password: string; displayName?: string; avatarDataUrl?: string; codeVerified: boolean }
-interface ChangePasswordInput { currentPassword: string; verificationCode: string; newPassword: string; codePreVerified?: boolean }
+interface ChangePasswordInput { email?: string; currentPassword?: string; verificationCode?: string; newPassword: string; codePreVerified?: boolean }
 
 export const isStrongPassword = (pw: string): boolean =>
   pw.length >= 6 && /[A-Za-z]/.test(pw) && /[0-9]/.test(pw)
@@ -276,23 +276,28 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 
-  changePassword: async ({ currentPassword, verificationCode, newPassword, codePreVerified }) => {
+  changePassword: async ({ email, currentPassword, verificationCode, newPassword, codePreVerified }) => {
     const currentUser = readSavedUser()
-    if (!currentUser) {
+    // Allow forgot-password flow (not logged in) when codePreVerified + email provided
+    const targetEmail = email ?? currentUser?.email
+    if (!targetEmail) {
       set({ error: 'Not logged in.' })
       return false
     }
 
     const accounts = readSavedAccounts()
-    const account = accounts.find((a) => a.email.toLowerCase() === currentUser.email.toLowerCase())
+    const account = accounts.find((a) => a.email.toLowerCase() === targetEmail.toLowerCase())
     if (!account) {
       set({ error: 'Account not found.' })
       return false
     }
 
-    if (account.password !== currentPassword) {
-      set({ error: 'Current password is incorrect.' })
-      return false
+    // Skip current-password check when the OTP flow already verified identity
+    if (!codePreVerified) {
+      if (account.password !== currentPassword) {
+        set({ error: 'Current password is incorrect.' })
+        return false
+      }
     }
 
     if (!isStrongPassword(newPassword)) {
@@ -306,7 +311,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         const res = await fetch(`${API_BASE}/auth/verify-code`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: currentUser.email, code: verificationCode.trim() }),
+          body: JSON.stringify({ email: targetEmail, code: verificationCode!.trim() }),
         })
         if (!res.ok) {
           const data = await res.json().catch(() => ({}))
@@ -320,7 +325,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
 
     const nextAccounts = accounts.map((a) =>
-      a.email.toLowerCase() === currentUser.email.toLowerCase() ? { ...a, password: newPassword } : a,
+      a.email.toLowerCase() === targetEmail.toLowerCase() ? { ...a, password: newPassword } : a,
     )
     saveAccounts(nextAccounts)
     set({ error: null })

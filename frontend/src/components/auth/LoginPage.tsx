@@ -49,7 +49,18 @@ export const LoginPage = () => {
   const [cropY, setCropY] = useState(0)
   const [emailFocused, setEmailFocused] = useState(false)
 
-  const { rememberedAccounts, mode, error, setMode, login, register, clearError } = useAuthStore()
+  // Reset password flow
+  const [resetStep, setResetStep] = useState<0 | 1 | 2 | 3>(0)
+  const [resetEmail, setResetEmail] = useState('')
+  const [resetCode, setResetCode] = useState('')
+  const [resetNewPassword, setResetNewPassword] = useState('')
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('')
+  const [resetError, setResetError] = useState('')
+  const [resetLoading, setResetLoading] = useState(false)
+  const [resetSuccess, setResetSuccess] = useState(false)
+  const [resendCooldown, setResendCooldown] = useState(0)
+
+  const { rememberedAccounts, mode, error, setMode, login, register, clearError, changePassword } = useAuthStore()
 
   useEffect(() => {
     window.setTimeout(() => emailInputRef.current?.focus(), 80)
@@ -71,6 +82,91 @@ export const LoginPage = () => {
       window.removeEventListener('pointerup', handlePointerUp)
     }
   }, [cropZoom, cropImageSize])
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return
+    const id = window.setInterval(() => setResendCooldown(c => c <= 1 ? 0 : c - 1), 1000)
+    return () => window.clearInterval(id)
+  }, [resendCooldown])
+
+  const enterResetMode = () => {
+    clearError()
+    setResetStep(1)
+    setResetEmail(email)
+    setResetCode('')
+    setResetNewPassword('')
+    setResetConfirmPassword('')
+    setResetError('')
+    setResetSuccess(false)
+    setResendCooldown(0)
+  }
+
+  const exitResetMode = () => {
+    setResetStep(0)
+    setResetError('')
+    setResetSuccess(false)
+  }
+
+  const handleResetSendCode = async () => {
+    if (!resetEmail.includes('@')) { setResetError('Enter a valid email address.'); return }
+    setResetLoading(true); setResetError('')
+    try {
+      const res = await fetch('http://127.0.0.1:8766/auth/send-code', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: resetEmail }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setResetError((data as { detail?: string }).detail ?? 'Failed to send code.')
+      } else {
+        setResetStep(2)
+        setResendCooldown(60)
+      }
+    } catch {
+      setResetError('Could not reach the server. Please check your connection.')
+    } finally {
+      setResetLoading(false)
+    }
+  }
+
+  const handleResetVerifyCode = async () => {
+    if (!/^\d{6}$/.test(resetCode.trim())) { setResetError('Enter the 6-digit code from your email.'); return }
+    setResetLoading(true); setResetError('')
+    try {
+      const res = await fetch('http://127.0.0.1:8766/auth/verify-code', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: resetEmail, code: resetCode.trim() }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setResetError((data as { detail?: string }).detail ?? 'Incorrect or expired code.')
+      } else {
+        setResetStep(3)
+      }
+    } catch {
+      setResetError('Could not reach the server. Please check your connection.')
+    } finally {
+      setResetLoading(false)
+    }
+  }
+
+  const handleResetPassword = async () => {
+    if (resetNewPassword.length < 6 || !/[a-zA-Z]/.test(resetNewPassword) || !/[0-9]/.test(resetNewPassword)) {
+      setResetError('Password must be at least 6 characters and include both letters and numbers.')
+      return
+    }
+    if (resetNewPassword !== resetConfirmPassword) { setResetError('Passwords do not match.'); return }
+    setResetLoading(true); setResetError('')
+    const ok = await changePassword({ email: resetEmail, newPassword: resetNewPassword, codePreVerified: true })
+    setResetLoading(false)
+    if (ok) {
+      setResetSuccess(true)
+      window.setTimeout(() => { exitResetMode() }, 2000)
+    } else {
+      const storeError = useAuthStore.getState().error
+      setResetError(storeError ?? 'Failed to reset password.')
+    }
+  }
 
   const filteredAccounts = rememberedAccounts.filter((account) => {
     if (mode !== 'login') return false
@@ -189,7 +285,129 @@ export const LoginPage = () => {
         WebkitAppRegion: 'no-drag',
       }}>
         <div style={{ width: '100%', maxWidth: 360 }}>
-          {/* Heading */}
+          {resetStep > 0 ? (
+            <>
+              {/* Reset password heading */}
+              <div style={{ textAlign: 'center', marginBottom: 20 }}>
+                <div style={{ fontSize: 22, fontWeight: 850, color: '#111827', letterSpacing: '-0.3px' }}>Reset password</div>
+                <div style={{ fontSize: 12, color: '#6B7280', marginTop: 5 }}>
+                  {resetStep === 1 && 'Enter your account email to receive a code.'}
+                  {resetStep === 2 && 'Enter the 6-digit code sent to your email.'}
+                  {resetStep === 3 && 'Choose a new password for your account.'}
+                </div>
+              </div>
+
+              {/* Reset error */}
+              {resetError && (
+                <div style={{
+                  background: 'rgba(239,68,68,0.08)', border: '0.5px solid rgba(239,68,68,0.26)',
+                  color: '#A32020', borderRadius: 9, padding: '8px 11px',
+                  fontSize: 11, lineHeight: 1.6, marginBottom: 14,
+                }}>
+                  {resetError}
+                </div>
+              )}
+
+              {/* Reset success */}
+              {resetSuccess && (
+                <div style={{
+                  background: 'rgba(34,197,94,0.08)', border: '0.5px solid rgba(34,197,94,0.3)',
+                  color: '#166534', borderRadius: 9, padding: '8px 11px',
+                  fontSize: 11, lineHeight: 1.6, marginBottom: 14,
+                }}>
+                  Password reset successfully. Returning to sign in...
+                </div>
+              )}
+
+              {/* Step 1: Email */}
+              {resetStep === 1 && (
+                <>
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 11, color: '#374151', fontWeight: 700, marginBottom: 5 }}>Email</div>
+                    <input
+                      value={resetEmail}
+                      onChange={e => { setResetError(''); setResetEmail(e.target.value) }}
+                      onKeyDown={e => { if (e.key === 'Enter') handleResetSendCode() }}
+                      placeholder="you@example.com"
+                      style={{ width: '100%', height: 38, borderRadius: 9, border: '1px solid #D1D5DB', padding: '0 12px', outline: 'none', fontSize: 12, boxSizing: 'border-box', background: '#fff' }}
+                    />
+                  </div>
+                  <button type="button" onClick={handleResetSendCode} disabled={resetLoading}
+                    style={{ width: '100%', height: 40, borderRadius: 10, border: 'none', background: '#1F2937', color: '#fff', fontSize: 13, fontWeight: 800, cursor: resetLoading ? 'default' : 'pointer', opacity: resetLoading ? 0.7 : 1 }}>
+                    {resetLoading ? 'Sending...' : 'Send Code'}
+                  </button>
+                </>
+              )}
+
+              {/* Step 2: OTP */}
+              {resetStep === 2 && (
+                <>
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 11, color: '#374151', fontWeight: 700, marginBottom: 5 }}>Verification code</div>
+                    <input
+                      value={resetCode}
+                      onChange={e => { setResetError(''); setResetCode(e.target.value.replace(/\D/g, '').slice(0, 6)) }}
+                      onKeyDown={e => { if (e.key === 'Enter') handleResetVerifyCode() }}
+                      placeholder="6-digit code"
+                      style={{ width: '100%', height: 38, borderRadius: 9, border: '1px solid #D1D5DB', padding: '0 12px', outline: 'none', fontSize: 12, boxSizing: 'border-box', background: '#fff', letterSpacing: '0.1em' }}
+                    />
+                  </div>
+                  <button type="button" onClick={handleResetVerifyCode} disabled={resetLoading}
+                    style={{ width: '100%', height: 40, borderRadius: 10, border: 'none', background: '#1F2937', color: '#fff', fontSize: 13, fontWeight: 800, cursor: resetLoading ? 'default' : 'pointer', opacity: resetLoading ? 0.7 : 1, marginBottom: 10 }}>
+                    {resetLoading ? 'Verifying...' : 'Verify'}
+                  </button>
+                  <div style={{ textAlign: 'center' }}>
+                    <button type="button" onClick={resendCooldown > 0 ? undefined : handleResetSendCode} disabled={resendCooldown > 0 || resetLoading}
+                      style={{ background: 'none', border: 'none', padding: 0, cursor: resendCooldown > 0 ? 'default' : 'pointer', fontSize: 11, color: resendCooldown > 0 ? '#9CA3AF' : '#374151', textDecoration: resendCooldown > 0 ? 'none' : 'underline' }}>
+                      {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : 'Resend code'}
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {/* Step 3: New password */}
+              {resetStep === 3 && (
+                <>
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 11, color: '#374151', fontWeight: 700, marginBottom: 5 }}>New password</div>
+                    <input
+                      value={resetNewPassword}
+                      type="password"
+                      onChange={e => { setResetError(''); setResetNewPassword(e.target.value) }}
+                      placeholder="At least 6 characters"
+                      style={{ width: '100%', height: 38, borderRadius: 9, border: '1px solid #D1D5DB', padding: '0 12px', outline: 'none', fontSize: 12, boxSizing: 'border-box', background: '#fff' }}
+                    />
+                  </div>
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 11, color: '#374151', fontWeight: 700, marginBottom: 5 }}>Confirm password</div>
+                    <input
+                      value={resetConfirmPassword}
+                      type="password"
+                      onChange={e => { setResetError(''); setResetConfirmPassword(e.target.value) }}
+                      onKeyDown={e => { if (e.key === 'Enter') handleResetPassword() }}
+                      placeholder="Repeat new password"
+                      style={{ width: '100%', height: 38, borderRadius: 9, border: '1px solid #D1D5DB', padding: '0 12px', outline: 'none', fontSize: 12, boxSizing: 'border-box', background: '#fff' }}
+                    />
+                  </div>
+                  <button type="button" onClick={handleResetPassword} disabled={resetLoading || resetSuccess}
+                    style={{ width: '100%', height: 40, borderRadius: 10, border: 'none', background: '#1F2937', color: '#fff', fontSize: 13, fontWeight: 800, cursor: (resetLoading || resetSuccess) ? 'default' : 'pointer', opacity: (resetLoading || resetSuccess) ? 0.7 : 1 }}>
+                    {resetLoading ? 'Resetting...' : 'Reset Password'}
+                  </button>
+                </>
+              )}
+
+              {/* Back to sign in */}
+              {!resetSuccess && (
+                <div style={{ textAlign: 'center', marginTop: 16 }}>
+                  <button type="button" onClick={exitResetMode}
+                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 11, color: '#6B7280', textDecoration: 'underline' }}>
+                    Back to sign in
+                  </button>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
           <div style={{ textAlign: 'center', marginBottom: 20 }}>
             <div style={{ fontSize: 22, fontWeight: 850, color: '#111827', letterSpacing: '-0.3px' }}>
               {mode === 'login' ? 'Welcome back' : 'Create account'}
@@ -287,13 +505,22 @@ export const LoginPage = () => {
             </div>
 
             {/* Password */}
-            <div style={{ marginBottom: mode === 'register' ? 12 : 20 }}>
+            <div style={{ marginBottom: mode === 'register' ? 12 : 4 }}>
               <div style={{ fontSize: 11, color: '#374151', fontWeight: 700, marginBottom: 5 }}>Password</div>
               <input value={password} type="password"
                 onChange={e => { clearError(); setPassword(e.target.value) }}
                 placeholder="At least 6 characters"
                 style={{ width: '100%', height: 38, borderRadius: 9, border: '1px solid #D1D5DB', padding: '0 12px', outline: 'none', fontSize: 12, boxSizing: 'border-box', background: '#fff' }} />
             </div>
+
+            {mode === 'login' && (
+              <div style={{ textAlign: 'right', marginBottom: 16, marginTop: 4 }}>
+                <button type="button" onClick={() => enterResetMode()}
+                  style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 11, color: '#111827', textDecoration: 'underline' }}>
+                  Forgot password?
+                </button>
+              </div>
+            )}
 
             {mode === 'register' && (
               <>
@@ -334,6 +561,8 @@ export const LoginPage = () => {
               {mode === 'login' ? 'Sign in' : 'Create account'}
             </button>
           </form>
+          </>
+          )}
         </div>
       </div>
     </div>
