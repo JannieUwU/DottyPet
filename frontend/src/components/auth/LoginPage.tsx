@@ -49,6 +49,13 @@ export const LoginPage = () => {
   const [cropY, setCropY] = useState(0)
   const [emailFocused, setEmailFocused] = useState(false)
 
+  // Register OTP flow
+  const [regStep, setRegStep] = useState<0 | 1>(0)   // 0=form, 1=enter code
+  const [regCode, setRegCode] = useState('')
+  const [regCodeError, setRegCodeError] = useState('')
+  const [regCodeLoading, setRegCodeLoading] = useState(false)
+  const [regResendCooldown, setRegResendCooldown] = useState(0)
+
   // Reset password flow
   const [resetStep, setResetStep] = useState<0 | 1 | 2 | 3>(0)
   const [resetEmail, setResetEmail] = useState('')
@@ -88,6 +95,57 @@ export const LoginPage = () => {
     const id = window.setInterval(() => setResendCooldown(c => c <= 1 ? 0 : c - 1), 1000)
     return () => window.clearInterval(id)
   }, [resendCooldown])
+
+  useEffect(() => {
+    if (regResendCooldown <= 0) return
+    const id = window.setInterval(() => setRegResendCooldown(c => c <= 1 ? 0 : c - 1), 1000)
+    return () => window.clearInterval(id)
+  }, [regResendCooldown])
+
+  const handleRegSendCode = async () => {
+    clearError(); setRegCodeError('')
+    setRegCodeLoading(true)
+    try {
+      const res = await fetch('http://127.0.0.1:8766/auth/send-code', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim() }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setRegCodeError((data as { detail?: string }).detail ?? 'Failed to send code.')
+      } else {
+        setRegStep(1)
+        setRegResendCooldown(60)
+      }
+    } catch {
+      setRegCodeError('Could not reach the server. Please check your connection.')
+    } finally {
+      setRegCodeLoading(false)
+    }
+  }
+
+  const handleRegVerifyAndCreate = async () => {
+    if (!/^\d{6}$/.test(regCode.trim())) { setRegCodeError('Enter the 6-digit code from your email.'); return }
+    setRegCodeLoading(true); setRegCodeError('')
+    try {
+      const res = await fetch('http://127.0.0.1:8766/auth/verify-code', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim(), code: regCode.trim() }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setRegCodeError((data as { detail?: string }).detail ?? 'Incorrect or expired code.')
+        setRegCodeLoading(false)
+        return
+      }
+    } catch {
+      setRegCodeError('Could not reach the server. Please check your connection.')
+      setRegCodeLoading(false)
+      return
+    }
+    setRegCodeLoading(false)
+    register({ email, password, displayName, avatarDataUrl, codeVerified: true })
+  }
 
   const enterResetMode = () => {
     clearError()
@@ -180,8 +238,10 @@ export const LoginPage = () => {
     event.preventDefault()
     if (mode === 'login') {
       login({ email, password })
+    } else if (regStep === 0) {
+      handleRegSendCode()
     } else {
-      register({ email, password, displayName, avatarDataUrl })
+      handleRegVerifyAndCreate()
     }
   }
 
@@ -191,6 +251,7 @@ export const LoginPage = () => {
     setAvatarDataUrl(''); setAvatarError('')
     setCropImageSrc(''); setCropImageSize({ width: 0, height: 0 })
     setCropZoom(1); setCropX(0); setCropY(0); setEmailFocused(false)
+    setRegStep(0); setRegCode(''); setRegCodeError(''); setRegResendCooldown(0)
     setMode(next)
   }
 
@@ -536,7 +597,7 @@ export const LoginPage = () => {
                 </div>
 
                 {/* Avatar */}
-                <div style={{ marginBottom: 20 }}>
+                <div style={{ marginBottom: regStep === 0 ? 20 : 14 }}>
                   <div style={{ fontSize: 11, color: '#374151', fontWeight: 700, marginBottom: 5 }}>
                     Avatar <span style={{ color: '#9CA3AF', fontWeight: 400 }}>(optional)</span>
                   </div>
@@ -554,11 +615,37 @@ export const LoginPage = () => {
                   </div>
                   {avatarError && <div style={{ fontSize: 10, color: '#A32020', marginTop: 5 }}>{avatarError}</div>}
                 </div>
+
+                {/* Step 1: OTP input */}
+                {regStep === 1 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 11, color: '#374151', fontWeight: 700, marginBottom: 5 }}>Verification code</div>
+                    <input
+                      value={regCode}
+                      onChange={e => { setRegCodeError(''); setRegCode(e.target.value.replace(/\D/g, '').slice(0, 6)) }}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleRegVerifyAndCreate() } }}
+                      placeholder="6-digit code sent to your email"
+                      style={{ width: '100%', height: 38, borderRadius: 9, border: '1px solid #D1D5DB', padding: '0 12px', outline: 'none', fontSize: 12, boxSizing: 'border-box', background: '#fff', letterSpacing: '0.1em' }}
+                    />
+                    {regCodeError && (
+                      <div style={{ background: 'rgba(239,68,68,0.08)', border: '0.5px solid rgba(239,68,68,0.26)', color: '#A32020', borderRadius: 9, padding: '7px 11px', fontSize: 11, lineHeight: 1.6, marginTop: 8 }}>
+                        {regCodeError}
+                      </div>
+                    )}
+                    <div style={{ textAlign: 'right', marginTop: 6 }}>
+                      <button type="button" onClick={regResendCooldown > 0 ? undefined : handleRegSendCode} disabled={regResendCooldown > 0 || regCodeLoading}
+                        style={{ background: 'none', border: 'none', padding: 0, cursor: regResendCooldown > 0 ? 'default' : 'pointer', fontSize: 11, color: regResendCooldown > 0 ? '#9CA3AF' : '#374151', textDecoration: regResendCooldown > 0 ? 'none' : 'underline' }}>
+                        {regResendCooldown > 0 ? `Resend code in ${regResendCooldown}s` : 'Resend code'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </>
             )}
 
-            <button type="submit" style={{ width: '100%', height: 40, borderRadius: 10, border: 'none', background: '#1F2937', color: '#fff', fontSize: 13, fontWeight: 800, cursor: 'pointer' }}>
-              {mode === 'login' ? 'Sign in' : 'Create account'}
+            <button type="submit" disabled={mode === 'register' && regCodeLoading}
+              style={{ width: '100%', height: 40, borderRadius: 10, border: 'none', background: '#1F2937', color: '#fff', fontSize: 13, fontWeight: 800, cursor: (mode === 'register' && regCodeLoading) ? 'default' : 'pointer', opacity: (mode === 'register' && regCodeLoading) ? 0.7 : 1 }}>
+              {mode === 'login' ? 'Sign in' : regStep === 0 ? (regCodeLoading ? 'Sending...' : 'Send Code') : (regCodeLoading ? 'Verifying...' : 'Create account')}
             </button>
           </form>
           </>
